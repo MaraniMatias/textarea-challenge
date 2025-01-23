@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Editor de Texto Avanzado</title>
+    <style>
+      /* Reset de box-sizing para todos los elementos */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* Estilos generales */
+      body {
+        height: 100vh;
+        font-family: monospace;
+        background-color: #2e3440;
+        color: #d8dee9;
+        overflow: hidden; /* Evita el desplazamiento de la página */
+        display: flex;
+        flex-direction: column;
+        position: relative; /* Para posicionar el tooltip relativo al body */
+      }
+
+      /* Tooltip de herramientas */
+      .tooltip {
+        position: absolute;
+        background-color: #3b4252;
+        padding: 3px;
+        border-radius: 5px;
+        display: none; /* Oculto por defecto */
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+      }
+
+      .tooltip label {
+        color: #d8dee9;
+        margin-right: 5px;
+      }
+
+      .tooltip button {
+        padding: 5px 10px;
+        background-color: #4c566a;
+        border: none;
+        color: #d8dee9;
+        cursor: pointer;
+        border-radius: 3px;
+        font-weight: bold;
+        margin-right: 5px;
+      }
+
+      .tooltip button:hover {
+        background-color: #81a1c1;
+      }
+
+      .tooltip input[type="color"] {
+        margin-right: 5px;
+        padding: 0;
+        border: none;
+        background: none;
+        cursor: pointer;
+      }
+
+      /* Contenedor principal del editor */
+      .editor-container {
+        display: flex;
+        flex: 1;
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Contenedor para el textarea y el código resaltado */
+      .textarea-container {
+        position: relative;
+        flex: 1;
+        height: 100%;
+      }
+
+      /* Estilos para el textarea */
+      #codeArea {
+        width: 100%;
+        height: 100%;
+        padding: 10px;
+        border: none;
+        outline: none;
+        resize: none;
+        font-size: 14px;
+        line-height: 1.5em;
+        background-color: transparent;
+        color: transparent;
+        caret-color: white; /* Color del cursor */
+        overflow: auto;
+        white-space: pre-wrap; /* Permite el ajuste de línea */
+        word-wrap: break-word;
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 2; /* Asegura que el textarea esté sobre el pre */
+      }
+
+      /* Estilos para el código resaltado */
+      #highlightedCode {
+        position: absolute;
+        top: 0;
+        left: 0;
+        margin: 0;
+        padding: 10px;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        pointer-events: none; /* Permite interactuar con el textarea */
+        white-space: pre-wrap; /* Permite el ajuste de línea */
+        word-wrap: break-word;
+        font-size: 14px;
+        line-height: 1.5em;
+        color: #d8dee9; /* Color por defecto del texto resaltado */
+      }
+
+      /* Sincronización de desplazamiento */
+      #codeArea::-webkit-scrollbar,
+      #highlightedCode::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      #codeArea::-webkit-scrollbar-thumb,
+      #highlightedCode::-webkit-scrollbar-thumb {
+        background-color: #4c566a;
+        border-radius: 4px;
+      }
+
+      #codeArea::-webkit-scrollbar-thumb:hover,
+      #highlightedCode::-webkit-scrollbar-thumb:hover {
+        background-color: #81a1c1;
+      }
+
+      /* Estilos para spans coloreados y con estilo */
+      #highlightedCode span {
+        display: inline;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Tooltip de herramientas -->
+    <div class="tooltip" id="tooltip">
+      <!-- <label for="colorPicker">Color:</label> -->
+      <input type="color" id="colorPicker" value="#d8dee9" />
+      <button id="applyColor">Color</button>
+      <button id="clearColors">Limpiar Color</button>
+      <button id="boldButton"><strong>B</strong></button>
+      <button id="italicButton"><em>I</em></button>
+      <button id="clearStyles">Limpiar Estilos</button>
+    </div>
+
+    <div class="editor-container">
+      <!-- Contenedor para el textarea y el código resaltado -->
+      <div class="textarea-container">
+        <!-- Área de texto editable -->
+        <textarea id="codeArea">
+// Escribe tu código aquí
+function helloWorld() {
+    console.log("¡Hola, mundo!");
+}
+        </textarea>
+        <!-- Código resaltado (solo visual) -->
+        <pre id="highlightedCode"><code class="language-javascript">// Escribe tu código aquí
+function helloWorld() {
+    console.log("¡Hola, mundo!");
+}
+        </code></pre>
+      </div>
+    </div>
+
+    <script>
+      // Referencias a los elementos del DOM
+      const codeArea = document.getElementById("codeArea");
+      const highlightedCode = document.getElementById("highlightedCode").querySelector("code");
+      const colorPicker = document.getElementById("colorPicker");
+      const applyColorButton = document.getElementById("applyColor");
+      const clearColorsButton = document.getElementById("clearColors");
+      const boldButton = document.getElementById("boldButton");
+      const italicButton = document.getElementById("italicButton");
+      const clearStylesButton = document.getElementById("clearStyles");
+      const tooltip = document.getElementById("tooltip");
+
+      // Almacena las áreas con estilos
+      let styledRanges = [];
+
+      // Función para escapar caracteres HTML completos
+      function escapeHtml(text) {
+        const map = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;",
+        };
+        return text.replace(/[&<>"']/g, function (m) {
+          return map[m];
+        });
+      }
+
+      // Función para dividir rangos si hay superposición
+      function splitRanges(selectionStart, selectionEnd) {
+        const newRanges = [];
+        styledRanges.forEach((range) => {
+          if (range.end <= selectionStart || range.start >= selectionEnd) {
+            // No hay superposición
+            newRanges.push(range);
+          } else {
+            // Superposición detectada, dividir el rango
+            if (range.start < selectionStart) {
+              newRanges.push({
+                start: range.start,
+                end: selectionStart,
+                color: range.color,
+                bold: range.bold,
+                italic: range.italic,
+              });
+            }
+            if (range.end > selectionEnd) {
+              newRanges.push({
+                start: selectionEnd,
+                end: range.end,
+                color: range.color,
+                bold: range.bold,
+                italic: range.italic,
+              });
+            }
+            // La parte que se solapa será manejada por la nueva aplicación de estilos
+          }
+        });
+        styledRanges = newRanges;
+      }
+
+      // Función para aplicar estilos a los rangos seleccionados
+      function applyStyle(styleType, value) {
+        const selectionStart = codeArea.selectionStart;
+        const selectionEnd = codeArea.selectionEnd;
+
+        if (selectionStart === selectionEnd) {
+          alert("Por favor, selecciona el texto que deseas estilizar.");
+          return;
+        }
+
+        // Dividir rangos existentes para manejar superposiciones
+        splitRanges(selectionStart, selectionEnd);
+
+        // Aplicar el estilo a los nuevos rangos
+        let applied = false;
+        styledRanges.forEach((range) => {
+          if (range.start >= selectionStart && range.end <= selectionEnd) {
+            if (styleType === "color") {
+              range.color = value;
+            } else if (styleType === "bold") {
+              range.bold = value;
+            } else if (styleType === "italic") {
+              range.italic = value;
+            }
+            applied = true;
+          }
+        });
+
+        // Si no se aplicó en ningún rango (posiblemente no había estilos antes)
+        if (!applied) {
+          styledRanges.push({
+            start: selectionStart,
+            end: selectionEnd,
+            color: styleType === "color" ? value : null,
+            bold: styleType === "bold" ? value : null, // Cambiado de false a null
+            italic: styleType === "italic" ? value : null, // Cambiado de false a null
+          });
+        }
+
+        mergeAdjacentRanges();
+        updateHighlightedCode();
+      }
+
+      // Función para alternar estilos (negrita e itálica)
+      function toggleStyle(styleType) {
+        const selectionStart = codeArea.selectionStart;
+        const selectionEnd = codeArea.selectionEnd;
+
+        if (selectionStart === selectionEnd) {
+          alert("Por favor, selecciona el texto que deseas estilizar.");
+          return;
+        }
+
+        // Dividir rangos existentes para manejar superposiciones
+        splitRanges(selectionStart, selectionEnd);
+
+        let anyRangeModified = false;
+
+        // Alternar el estilo en los nuevos rangos
+        styledRanges.forEach((range) => {
+          if (range.start >= selectionStart && range.end <= selectionEnd) {
+            if (styleType === "bold") {
+              range.bold = range.bold === null ? true : !range.bold;
+            } else if (styleType === "italic") {
+              range.italic = range.italic === null ? true : !range.italic;
+            }
+            anyRangeModified = true;
+          }
+        });
+
+        // Si no se aplicó en ningún rango (posiblemente no había estilos antes)
+        if (!anyRangeModified) {
+          const newRange = {
+            start: selectionStart,
+            end: selectionEnd,
+            color: null,
+            bold: styleType === "bold" ? true : null,
+            italic: styleType === "italic" ? true : null,
+          };
+          styledRanges.push(newRange);
+        }
+
+        mergeAdjacentRanges();
+        updateHighlightedCode();
+      }
+
+      // Función para aplicar color a los rangos seleccionados
+      function applyColor(color) {
+        applyStyle("color", color);
+      }
+
+      // Función para limpiar colores en la selección
+      function clearColors() {
+        const selectionStart = codeArea.selectionStart;
+        const selectionEnd = codeArea.selectionEnd;
+
+        if (selectionStart === selectionEnd) {
+          alert("Por favor, selecciona el texto del cual deseas limpiar los colores.");
+          return;
+        }
+
+        // Dividir rangos existentes para manejar superposiciones
+        splitRanges(selectionStart, selectionEnd);
+
+        // Limpiar colores en los rangos dentro de la selección
+        styledRanges.forEach((range) => {
+          if (range.start >= selectionStart && range.end <= selectionEnd) {
+            range.color = null;
+          }
+        });
+
+        mergeAdjacentRanges();
+        updateHighlightedCode();
+      }
+
+      // Función para limpiar todos los estilos
+      function clearAllStyles() {
+        if (confirm("¿Estás seguro de que deseas limpiar todos los estilos aplicados?")) {
+          styledRanges = [];
+          updateHighlightedCode();
+        }
+      }
+
+      // Función para fusionar rangos adyacentes con los mismos estilos
+      function mergeAdjacentRanges() {
+        if (styledRanges.length === 0) return;
+
+        styledRanges.sort((a, b) => a.start - b.start);
+        const merged = [];
+        let prev = styledRanges[0];
+
+        for (let i = 1; i < styledRanges.length; i++) {
+          const current = styledRanges[i];
+          if (
+            prev.color === current.color &&
+            prev.bold === current.bold &&
+            prev.italic === current.italic &&
+            prev.end === current.start
+          ) {
+            // Fusionar rangos
+            prev.end = current.end;
+          } else {
+            merged.push(prev);
+            prev = current;
+          }
+        }
+        merged.push(prev);
+        styledRanges = merged;
+      }
+
+      // Función para actualizar el resaltado de sintaxis
+      function updateHighlightedCode() {
+        const text = codeArea.value;
+        let result = "";
+        let currentIndex = 0;
+
+        // Ordenar los rangos por inicio ascendente
+        styledRanges.sort((a, b) => a.start - b.start);
+
+        styledRanges.forEach((range) => {
+          const { start, end, color, bold, italic } = range;
+
+          // Añadir texto antes del rango estilizado
+          if (start > currentIndex) {
+            const segment = text.slice(currentIndex, start);
+            result += escapeHtml(segment);
+          }
+
+          // Construir el estilo
+          let style = "";
+          if (color) {
+            style += `color: ${color};`;
+          }
+          if (bold) {
+            style += "font-weight: bold;";
+          }
+          if (italic) {
+            style += "font-style: italic;";
+          }
+
+          // Añadir el segmento estilizado
+          const styledSegment = text.slice(start, end);
+          if (style) {
+            result += `<span style="${style}">${escapeHtml(styledSegment)}</span>`;
+          } else {
+            result += escapeHtml(styledSegment);
+          }
+
+          currentIndex = end;
+        });
+
+        // Añadir cualquier texto restante después del último rango
+        if (currentIndex < text.length) {
+          const segment = text.slice(currentIndex);
+          result += escapeHtml(segment);
+        }
+
+        highlightedCode.innerHTML = result;
+      }
+
+      // Evento para actualizar el resaltado al escribir
+      codeArea.addEventListener("input", () => {
+        updateHighlightedCode();
+      });
+
+      // Evento para sincronizar el desplazamiento
+      codeArea.addEventListener("scroll", () => {
+        highlightedCode.parentElement.scrollTop = codeArea.scrollTop;
+        highlightedCode.parentElement.scrollLeft = codeArea.scrollLeft;
+      });
+
+      // Funciones para mostrar y posicionar el tooltip
+      function showTooltip() {
+        const selectionStart = codeArea.selectionStart;
+        const selectionEnd = codeArea.selectionEnd;
+
+        if (selectionStart === selectionEnd) {
+          tooltip.style.display = "none";
+          return;
+        }
+
+        // Obtener la posición del cursor
+        const { top, left } = getCaretCoordinates(codeArea, selectionEnd);
+
+        // Ajustar la posición del tooltip
+        tooltip.style.top = `${top + 20}px`;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.display = "flex";
+        tooltip.style.alignItems = "center";
+        tooltip.style.gap = "5px";
+      }
+
+      function hideTooltip() {
+        tooltip.style.display = "none";
+      }
+
+      // Evento para detectar selección de texto
+      codeArea.addEventListener("mouseup", () => {
+        setTimeout(showTooltip, 0);
+      });
+
+      codeArea.addEventListener("keyup", (e) => {
+        if (
+          e.key === "Shift" ||
+          e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown"
+        ) {
+          setTimeout(showTooltip, 0);
+        }
+      });
+
+      // Ocultar tooltip al hacer clic fuera
+      document.addEventListener("click", (e) => {
+        if (!tooltip.contains(e.target) && e.target !== codeArea) {
+          hideTooltip();
+        }
+      });
+
+      // Eventos para los botones
+      applyColorButton.addEventListener("click", () => {
+        const color = colorPicker.value;
+        applyColor(color);
+        hideTooltip();
+      });
+
+      clearColorsButton.addEventListener("click", () => {
+        clearColors();
+        hideTooltip();
+      });
+
+      boldButton.addEventListener("click", () => {
+        toggleStyle("bold");
+        hideTooltip();
+      });
+
+      italicButton.addEventListener("click", () => {
+        toggleStyle("italic");
+        hideTooltip();
+      });
+
+      clearStylesButton.addEventListener("click", () => {
+        clearAllStyles();
+        hideTooltip();
+      });
+
+      // Inicializar el resaltado
+      updateHighlightedCode();
+
+      /**
+       * Función para obtener las coordenadas del cursor en el textarea.
+       * Utiliza una librería externa llamada "textarea-caret-position" para calcular la posición.
+       * Dado que no podemos incluir librerías externas aquí, se implementa una versión simplificada.
+       */
+      function getCaretCoordinates(element, position) {
+        const div = document.createElement("div");
+        const style = getComputedStyle(element);
+        for (const prop of style) {
+          div.style[prop] = style[prop];
+        }
+        div.style.position = "absolute";
+        div.style.visibility = "hidden";
+        div.style.whiteSpace = "pre-wrap";
+        div.style.wordWrap = "break-word";
+
+        const textContent = element.value.substring(0, position);
+        div.textContent = textContent.replace(/\n/g, "\n\u200b");
+
+        const span = document.createElement("span");
+        span.textContent = element.value.substring(position) || ".";
+        div.appendChild(span);
+
+        document.body.appendChild(div);
+        const { offsetLeft: spanLeft, offsetTop: spanTop } = span;
+        const { offsetLeft: divLeft, offsetTop: divTop } = div;
+
+        document.body.removeChild(div);
+
+        return { top: divTop + spanTop - element.scrollTop, left: divLeft + spanLeft - element.scrollLeft };
+      }
+    </script>
+  </body>
+</html>
