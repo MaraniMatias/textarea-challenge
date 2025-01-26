@@ -394,18 +394,19 @@ function adjustStyledRanges(diff) {
  * @returns {void}
  */
 function updateHighlightedCode(styledRanges) {
-  styledRanges.sort((a, b) => a.start - b.start);
-
+  // Asumimos que styledRanges ya está ordenado tras mergeAdjacentRanges
   const text = textarea.value;
   let result = "";
   let currentIndex = 0;
 
-  styledRanges.forEach((range, index) => {
+  const length = styledRanges.length;
+  for (let i = 0; i < length; i++) {
+    const range = styledRanges[i];
     const { start, end, color, bold, italic } = range;
+
     // Text without styles
     if (start > currentIndex) {
-      const segment = text.slice(currentIndex, start);
-      result += escapeHtml(segment);
+      result += escapeHtml(text.slice(currentIndex, start));
     }
 
     let styleString = "";
@@ -415,15 +416,15 @@ function updateHighlightedCode(styledRanges) {
 
     const styledSegment = text.slice(start, end);
     if (styleString) {
-      result += `<span data-range-id="${index}" style="${styleString}">${escapeHtml(styledSegment)}</span>`;
+      result += `<span data-range-id="${i}" style="${styleString}">${escapeHtml(styledSegment)}</span>`;
     } else {
-      result += `<span data-range-id="${index}">${escapeHtml(styledSegment)}</span>`;
+      result += `<span data-range-id="${i}">${escapeHtml(styledSegment)}</span>`;
     }
 
     currentIndex = end;
-  });
+  }
 
-  // Add last text
+  // Resto del texto sin estilo
   if (currentIndex < text.length) {
     result += escapeHtml(text.slice(currentIndex));
   }
@@ -508,46 +509,47 @@ function hideTooltip() {
  */
 function clearAllStyles() {
   if (confirm("¿Seguro que deseas eliminar todos los estilos aplicados?")) {
-    // Simplemente reiniciamos el arreglo global
     styledRanges.length = 0;
     updateHighlightedCode(styledRanges);
   }
 }
 
-/* -----------------------------
-   Event listeners
------------------------------ */
+/** debounce */
+let typingTimer;
+const TYPING_DELAY = 300;
+/**
+ *
+ * @param callback
+ */
+function debounceInput(callback) {
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(callback, TYPING_DELAY);
+}
+/** debounce */
 
-// Detectamos cambios en el textarea para ajustar los rangos
+/* ----- Event listeners ---- */
 textarea.addEventListener("input", () => {
-  const newText = textarea.value;
-  const diff = findDiff(previousText, newText);
-  if (diff) {
-    adjustStyledRanges(diff);
-  }
-  previousText = newText;
-  updateHighlightedCode(styledRanges);
+  debounceInput(() => {
+    const newText = textarea.value;
+    const diff = findDiff(previousText, newText);
+    if (diff) {
+      adjustStyledRanges(diff);
+      updateHighlightedCode(styledRanges);
+    }
+    previousText = newText;
+  });
 });
 
-// Sincroniza la barra de scroll del <textarea> con la del <pre> espejado
-textarea.addEventListener("scroll", () => {
-  textareaMirror.parentElement.scrollTop = textarea.scrollTop;
-  textareaMirror.parentElement.scrollLeft = textarea.scrollLeft;
-});
-
-// MouseUp: mostramos el tooltip (si hay texto seleccionado) y resaltamos spans.
 textarea.addEventListener("mouseup", () => {
   setTimeout(showTooltip, 0);
 });
 
-// Oculta el tooltip si hacemos clic fuera de él y del textarea
 document.addEventListener("click", (e) => {
   if (!tooltip.contains(e.target) && e.target !== textarea) {
     hideTooltip();
   }
 });
 
-// Botones del tooltip
 applyColorButton.addEventListener("click", () => {
   const { selectionStart, selectionEnd } = textarea;
   applyStyle("color", colorPicker.value, selectionStart, selectionEnd);
